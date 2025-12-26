@@ -1,0 +1,154 @@
+name: Slack Notification (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      event_type:
+        description: 'Type of event: push, workflow_success, workflow_failure'
+        required: true
+        type: string
+      repository:
+        description: 'Repository name'
+        required: true
+        type: string
+      branch:
+        description: 'Branch name'
+        required: true
+        type: string
+      actor:
+        description: 'User who triggered the event'
+        required: true
+        type: string
+      commit_message:
+        description: 'Commit message (for push events)'
+        required: false
+        type: string
+        default: ''
+      commit_url:
+        description: 'URL to the commit (for push events)'
+        required: false
+        type: string
+        default: ''
+      workflow_name:
+        description: 'Workflow name (for workflow_run events)'
+        required: false
+        type: string
+        default: ''
+      workflow_url:
+        description: 'URL to the workflow run'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      SLACK_WEBHOOK_URL:
+        description: 'Slack webhook URL for the target channel'
+        required: true
+
+jobs:
+  notify-push:
+    if: inputs.event_type == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on Push
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":bell: *Push to ${{ inputs.repository }}*\n*Branch:* `${{ inputs.branch }}`\n*By:* ${{ inputs.actor }}"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": ${{ inputs.commit_message }}
+                    }
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View Commit" },
+                      "url": "${{ inputs.commit_url }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  notify-workflow-success:
+    if: inputs.event_type == 'workflow_success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on Workflow Success
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":white_check_mark: *Workflow Succeeded*\n*Workflow:* ${{ inputs.workflow_name }}\n*Branch:* `${{ inputs.branch }}`\n*Repo:* ${{ inputs.repository }}\n*Triggered by:* ${{ inputs.actor }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View Run" },
+                      "url": "${{ inputs.workflow_url }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  notify-workflow-failure:
+    if: inputs.event_type == 'workflow_failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on Workflow Failure
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":x: *Workflow Failed*\n*Workflow:* ${{ inputs.workflow_name }}\n*Branch:* `${{ inputs.branch }}`\n*Repo:* ${{ inputs.repository }}\n*Triggered by:* ${{ inputs.actor }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View Run" },
+                      "url": "${{ inputs.workflow_url }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
