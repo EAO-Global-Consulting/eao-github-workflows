@@ -35,7 +35,7 @@ on:
 jobs:
   notify-push:
     if: github.event_name == 'push'
-    uses: EAO-HOLDINGS/eao-github-workflows/.github/workflows/slack-notify.yml@main
+    uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/slack-notify.yml@main
     with:
       event_type: push
       repository: ${{ github.repository }}
@@ -48,7 +48,7 @@ jobs:
 
   notify-workflow-success:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
-    uses: EAO-HOLDINGS/eao-github-workflows/.github/workflows/slack-notify.yml@main
+    uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/slack-notify.yml@main
     with:
       event_type: workflow_success
       repository: ${{ github.repository }}
@@ -61,7 +61,7 @@ jobs:
 
   notify-workflow-failure:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure'
-    uses: EAO-HOLDINGS/eao-github-workflows/.github/workflows/slack-notify.yml@main
+    uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/slack-notify.yml@main
     with:
       event_type: workflow_failure
       repository: ${{ github.repository }}
