@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       event_type:
-        description: 'Type of event: push, workflow_success, workflow_failure'
+        description: 'Type of event: push, pr_update, workflow_success, workflow_failure'
         required: true
         type: string
       repository:
@@ -36,6 +36,26 @@ on:
         default: ''
       workflow_url:
         description: 'URL to the workflow run'
+        required: false
+        type: string
+        default: ''
+      pr_number:
+        description: 'Pull request number (for pr_update events)'
+        required: false
+        type: string
+        default: ''
+      pr_title:
+        description: 'Pull request title (for pr_update events)'
+        required: false
+        type: string
+        default: ''
+      pr_url:
+        description: 'Pull request URL (for pr_update events)'
+        required: false
+        type: string
+        default: ''
+      base_branch:
+        description: 'Base branch for PR (for pr_update events)'
         required: false
         type: string
         default: ''
@@ -78,6 +98,39 @@ jobs:
                       "type": "button",
                       "text": { "type": "plain_text", "text": "View Commit" },
                       "url": "${{ inputs.commit_url }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  notify-pr-update:
+    if: inputs.event_type == 'pr_update'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on PR Update
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": ":arrows_counterclockwise: *New commits pushed to PR #${{ inputs.pr_number }}*\n*PR:* ${{ inputs.pr_title }}\n*Branch:* `${{ inputs.branch }}` → `${{ inputs.base_branch }}`\n*Repo:* ${{ inputs.repository }}\n*By:* ${{ inputs.actor }}"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": { "type": "plain_text", "text": "View PR" },
+                      "url": "${{ inputs.pr_url }}"
                     }
                   ]
                 }
