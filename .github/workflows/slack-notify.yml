@@ -69,74 +69,108 @@ jobs:
     if: inputs.event_type == 'push'
     runs-on: ubuntu-latest
     steps:
+      - name: Build Slack payload file
+        env:
+          REPOSITORY: ${{ inputs.repository }}
+          BRANCH: ${{ inputs.branch }}
+          ACTOR: ${{ inputs.actor }}
+          COMMIT_MESSAGE: ${{ inputs.commit_message }}
+          COMMIT_URL: ${{ inputs.commit_url }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          header_text = (
+            f":bell: *Push to {os.environ['REPOSITORY']}*\n"
+            f"*Branch:* `{os.environ['BRANCH']}`\n"
+            f"*By:* {os.environ['ACTOR']}"
+          )
+          commit_msg = os.environ['COMMIT_MESSAGE']
+          payload = {
+            "blocks": [
+              {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": header_text}
+              },
+              {
+                "type": "context",
+                "elements": [
+                  {"type": "mrkdwn", "text": commit_msg}
+                ]
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "View Commit"},
+                    "url": os.environ['COMMIT_URL']
+                  }
+                ]
+              }
+            ]
+          }
+          with open('/tmp/slack_payload.json', 'w') as f:
+            json.dump(payload, f)
+          EOF
+
       - name: Notify Slack on Push
         uses: slackapi/slack-github-action@v2.1.1
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":bell: *Push to ${{ inputs.repository }}*\n*Branch:* `${{ inputs.branch }}`\n*By:* ${{ inputs.actor }}"
-                  }
-                },
-                {
-                  "type": "context",
-                  "elements": [
-                    {
-                      "type": "mrkdwn",
-                      "text": ${{ inputs.commit_message }}
-                    }
-                  ]
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": { "type": "plain_text", "text": "View Commit" },
-                      "url": "${{ inputs.commit_url }}"
-                    }
-                  ]
-                }
-              ]
-            }
+          payload-file-path: /tmp/slack_payload.json
 
   notify-pr-update:
     if: inputs.event_type == 'pr_update'
     runs-on: ubuntu-latest
     steps:
+      - name: Build Slack payload file
+        env:
+          PR_TITLE: ${{ inputs.pr_title }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          BRANCH: ${{ inputs.branch }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+          REPOSITORY: ${{ inputs.repository }}
+          ACTOR: ${{ inputs.actor }}
+          PR_URL: ${{ inputs.pr_url }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          text = (
+            f":arrows_counterclockwise: *New commits pushed to PR #{os.environ['PR_NUMBER']}*\n"
+            f"*PR:* {os.environ['PR_TITLE']}\n"
+            f"*Branch:* `{os.environ['BRANCH']}` → `{os.environ['BASE_BRANCH']}`\n"
+            f"*Repo:* {os.environ['REPOSITORY']}\n"
+            f"*By:* {os.environ['ACTOR']}"
+          )
+          payload = {
+            "blocks": [
+              {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": text}
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "View PR"},
+                    "url": os.environ['PR_URL']
+                  }
+                ]
+              }
+            ]
+          }
+          with open('/tmp/slack_payload.json', 'w') as f:
+            json.dump(payload, f)
+          EOF
+
       - name: Notify Slack on PR Update
         uses: slackapi/slack-github-action@v2.1.1
         with:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
-          payload: |
-            {
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": ":arrows_counterclockwise: *New commits pushed to PR #${{ inputs.pr_number }}*\n*PR:* ${{ inputs.pr_title }}\n*Branch:* `${{ inputs.branch }}` → `${{ inputs.base_branch }}`\n*Repo:* ${{ inputs.repository }}\n*By:* ${{ inputs.actor }}"
-                  }
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": { "type": "plain_text", "text": "View PR" },
-                      "url": "${{ inputs.pr_url }}"
-                    }
-                  ]
-                }
-              ]
-            }
+          payload-file-path: /tmp/slack_payload.json
 
   notify-workflow-success:
     if: inputs.event_type == 'workflow_success'
