@@ -10,7 +10,7 @@ Sends Slack notifications for push events and workflow completions.
 
 ### Jira Ticket Check (`jira-check.yml`)
 
-Blocks a PR from merging unless its branch name references a valid Jira issue key for a specific project (e.g. `DSB-475`, found anywhere in the branch name — `feat/DSB-475-card-name`, `fix/DSB-475-bug`, `DSB-475-quick-change` all match). Calls the Jira REST API to confirm the ticket exists and isn't in a disallowed status (defaults to `Done(Prod)` or `To Do` — configurable per caller via `disallowed_statuses`). Supports a `no-jira-needed` label to bypass the check for PRs that genuinely don't need a ticket.
+Blocks a PR from merging unless its branch name references a valid Jira issue key for a specific project (e.g. `DSB-475`, found anywhere in the branch name — `feat/DSB-475-card-name`, `fix/DSB-475-bug`, `DSB-475-quick-change` all match), **and** the ticket is currently in the exact status the caller requires (e.g. `Dev Done`). On merge, it can also transition the ticket forward automatically (e.g. to `Done(Prod)`), so the board reflects real deploy state without relying on developers to move cards by hand. Supports a `no-jira-needed` label to bypass both the pre-merge check and the post-merge transition.
 
 ## Usage
 
@@ -84,30 +84,51 @@ jobs:
 3. Add two repository secrets:
    - `JIRA_EMAIL` — the service account's email
    - `JIRA_API_TOKEN` — the token from step 2
-4. Create `.github/workflows/jira-check.yml` in your repo:
+4. Create `.github/workflows/jira-check.yml` in your repo. Each target branch needs two jobs: one that gates the PR (`required_status`) and one that fires on merge (`merged: true`, `transition_to`):
 
 ```yaml
 name: Jira Ticket Check
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled, closed]
+    branches: [main]
 
 jobs:
   jira-check:
+    if: github.event.action != 'closed'
     uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/jira-check.yml@main
     with:
       branch: ${{ github.head_ref }}
       jira_base_url: https://yourcompany.atlassian.net
       project_key: DSB
       pr_labels: ${{ toJson(github.event.pull_request.labels.*.name) }}
+      required_status: 'Dev Done'
+    secrets:
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+
+  jira-transition:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/jira-check.yml@main
+    with:
+      branch: ${{ github.head_ref }}
+      jira_base_url: https://yourcompany.atlassian.net
+      project_key: DSB
+      pr_labels: ${{ toJson(github.event.pull_request.labels.*.name) }}
+      required_status: 'Dev Done'
+      merged: true
+      transition_to: 'Done(Prod)'
     secrets:
       JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
 ```
 
-5. In the repo's branch protection rules (Settings → Branches → Branch protection rule for `main`), add **"Jira Ticket Check / check"** to **Require status checks to pass before merging**. This is the step that actually makes it a gate — without it, the check runs but doesn't block the merge button.
+For a repo with multiple gated branches requiring different statuses (e.g. a `preprod` step before `main`), duplicate both jobs per branch and guard each with `github.base_ref == '<branch>'` — see `Konnetta-Mobile-app-dev/.github/workflows/jira-check.yml` for a working example with two gates.
+
+5. In the repo's branch protection rules (Settings → Branches → Branch protection rule for each gated branch), add the check job name(s) (e.g. **"Jira Ticket Check / jira-check"**) to **Require status checks to pass before merging**. This is the step that actually makes it a gate — without it, the check runs but doesn't block the merge button. The `jira-transition` job should NOT be added as a required check — it only runs after merge and has nothing to block.
 6. Branch names must contain the project's Jira key (`DSB-475`) anywhere in the name — no required prefix, so `feat/DSB-475-card-name`, `fix/DSB-475-bug`, `hotfix/DSB-475`, and `DSB-475-quick-change` all pass. Matching is case-insensitive. PRs that don't need a ticket can be exempted by adding a `no-jira-needed` label, which re-triggers the check via the `labeled` event type above.
+7. `transition_to` failures never fail the workflow (the PR is already merged by then, so there's nothing left to block) — they post a `::warning` instead. Check the Actions log if a card doesn't move; the most common cause is that Jira's workflow doesn't allow a direct transition from the ticket's current status to the target status.
 
 ### 4. Per-Repo Channel Routing
 

@@ -25,11 +25,20 @@ on:
         required: false
         type: string
         default: '[]'
-      disallowed_statuses:
-        description: 'Comma-separated Jira statuses that fail the check (ticket already closed out)'
+      required_status:
+        description: 'Jira status the ticket must be in for the PR to be allowed to merge (e.g. "Dev Done")'
+        required: true
+        type: string
+      merged:
+        description: 'Whether this run is for a merged PR (true) or an open/sync PR being checked (false)'
+        required: false
+        type: boolean
+        default: false
+      transition_to:
+        description: 'Jira status to transition the ticket to once the PR is merged (e.g. "Done(Prod)"). No-op if empty.'
         required: false
         type: string
-        default: 'Done(Prod),To Do'
+        default: ''
     secrets:
       JIRA_EMAIL:
         description: 'Email of the Jira service account'
@@ -40,6 +49,7 @@ on:
 
 jobs:
   check:
+    if: inputs.merged != true
     runs-on: ubuntu-latest
     steps:
       - name: Skip if bypass label present
@@ -91,14 +101,14 @@ jobs:
               f.write(f"key={key}\n")
           EOF
 
-      - name: Verify ticket in Jira
+      - name: Verify ticket status in Jira
         if: steps.bypass.outputs.skip != 'true'
         env:
           JIRA_BASE_URL: ${{ inputs.jira_base_url }}
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           ISSUE_KEY: ${{ steps.extract.outputs.key }}
-          DISALLOWED_STATUSES: ${{ inputs.disallowed_statuses }}
+          REQUIRED_STATUS: ${{ inputs.required_status }}
         run: |
           python3 - <<'EOF'
           import base64, json, os, sys, urllib.request, urllib.error
@@ -107,7 +117,7 @@ jobs:
           email = os.environ["JIRA_EMAIL"]
           token = os.environ["JIRA_API_TOKEN"]
           issue_key = os.environ["ISSUE_KEY"]
-          disallowed = {s.strip().lower() for s in os.environ["DISALLOWED_STATUSES"].split(",") if s.strip()}
+          required_status = os.environ["REQUIRED_STATUS"].strip()
 
           auth = base64.b64encode(f"{email}:{token}".encode()).decode()
           url = f"{base_url}/rest/api/3/issue/{issue_key}?fields=status,summary"
@@ -140,11 +150,117 @@ jobs:
           summary = data["fields"].get("summary", "")
           print(f"{issue_key}: '{summary}' — status: {status}")
 
-          if status.lower() in disallowed:
+          if status.strip().lower() != required_status.lower():
               print(f"::error::Jira issue '{issue_key}' is in status '{status}', "
-                    f"which isn't allowed for this PR (disallowed: {', '.join(sorted(disallowed))}). "
-                    f"Update the ticket's status, or link a different one, before merging.")
+                    f"but this PR requires it to be in '{required_status}'. "
+                    f"Move the card to '{required_status}' before merging.")
               sys.exit(1)
 
-          print(f"✓ {issue_key} is valid and open ({status}).")
+          print(f"✓ {issue_key} is in the required status ({status}).")
+          EOF
+
+  transition:
+    if: inputs.merged == true && inputs.transition_to != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip if bypass label present
+        id: bypass
+        env:
+          PR_LABELS: ${{ inputs.pr_labels }}
+          BYPASS_LABEL: ${{ inputs.bypass_label }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+
+          labels = json.loads(os.environ["PR_LABELS"])
+          bypass = os.environ["BYPASS_LABEL"]
+          skip = bypass in labels
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"skip={'true' if skip else 'false'}\n")
+          EOF
+
+      - name: Extract Jira key from branch name
+        if: steps.bypass.outputs.skip != 'true'
+        id: extract
+        env:
+          BRANCH: ${{ inputs.branch }}
+          PROJECT_KEY: ${{ inputs.project_key }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+
+          branch = os.environ["BRANCH"]
+          project_key = os.environ["PROJECT_KEY"].strip().upper()
+          pattern = rf'\b{re.escape(project_key)}-\d+\b'
+          match = re.search(pattern, branch, re.IGNORECASE)
+
+          key = match.group(0).upper() if match else ''
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"key={key}\n")
+          EOF
+
+      - name: Transition ticket in Jira
+        if: steps.bypass.outputs.skip != 'true' && steps.extract.outputs.key != ''
+        env:
+          JIRA_BASE_URL: ${{ inputs.jira_base_url }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          ISSUE_KEY: ${{ steps.extract.outputs.key }}
+          TRANSITION_TO: ${{ inputs.transition_to }}
+        run: |
+          python3 - <<'EOF'
+          import base64, json, os, sys, urllib.request, urllib.error
+
+          base_url = os.environ["JIRA_BASE_URL"].rstrip("/")
+          email = os.environ["JIRA_EMAIL"]
+          token = os.environ["JIRA_API_TOKEN"]
+          issue_key = os.environ["ISSUE_KEY"]
+          target_status = os.environ["TRANSITION_TO"].strip()
+
+          auth = base64.b64encode(f"{email}:{token}".encode()).decode()
+          headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+
+          # Look up available transitions for this issue
+          list_url = f"{base_url}/rest/api/3/issue/{issue_key}/transitions"
+          req = urllib.request.Request(list_url, headers=headers)
+          try:
+              with urllib.request.urlopen(req, timeout=15) as resp:
+                  data = json.load(resp)
+          except (urllib.error.HTTPError, urllib.error.URLError) as e:
+              print(f"::warning::Could not fetch transitions for '{issue_key}': {e}. "
+                    f"Card was not moved automatically — move it to '{target_status}' manually.")
+              sys.exit(0)
+
+          match = next(
+              (t for t in data.get("transitions", [])
+               if t["to"]["name"].strip().lower() == target_status.lower()),
+              None,
+          )
+
+          if not match:
+              available = ", ".join(t["to"]["name"] for t in data.get("transitions", []))
+              print(f"::warning::No transition to '{target_status}' available for '{issue_key}' "
+                    f"from its current status. Available transitions: {available}. "
+                    f"Move the card manually.")
+              sys.exit(0)
+
+          transition_url = f"{base_url}/rest/api/3/issue/{issue_key}/transitions"
+          body = json.dumps({"transition": {"id": match["id"]}}).encode()
+          req = urllib.request.Request(
+              transition_url,
+              data=body,
+              headers={**headers, "Content-Type": "application/json"},
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=15) as resp:
+                  resp.read()
+          except (urllib.error.HTTPError, urllib.error.URLError) as e:
+              print(f"::warning::Failed to transition '{issue_key}' to '{target_status}': {e}. "
+                    f"Move the card manually.")
+              sys.exit(0)
+
+          print(f"✓ Moved {issue_key} to '{target_status}'.")
           EOF
