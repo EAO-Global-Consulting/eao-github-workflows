@@ -100,6 +100,7 @@ jobs:
     uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/jira-check.yml@main
     with:
       branch: ${{ github.head_ref }}
+      pr_title: ${{ github.event.pull_request.title }}
       jira_base_url: https://yourcompany.atlassian.net
       project_key: DSB
       pr_labels: ${{ toJson(github.event.pull_request.labels.*.name) }}
@@ -113,6 +114,7 @@ jobs:
     uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/jira-check.yml@main
     with:
       branch: ${{ github.head_ref }}
+      pr_title: ${{ github.event.pull_request.title }}
       jira_base_url: https://yourcompany.atlassian.net
       project_key: DSB
       pr_labels: ${{ toJson(github.event.pull_request.labels.*.name) }}
@@ -127,7 +129,7 @@ jobs:
 For a repo with multiple gated branches requiring different statuses (e.g. a `preprod` step before `main`), duplicate both jobs per branch and guard each with `github.base_ref == '<branch>'` — see `Konnetta-Mobile-app-dev/.github/workflows/jira-check.yml` for a working example with two gates.
 
 5. In the repo's branch protection rules (Settings → Branches → Branch protection rule for each gated branch), add the check job name(s) (e.g. **"Jira Ticket Check / jira-check"**) to **Require status checks to pass before merging**. This is the step that actually makes it a gate — without it, the check runs but doesn't block the merge button. The `jira-transition` job should NOT be added as a required check — it only runs after merge and has nothing to block.
-6. Branch names must contain the project's Jira key (`DSB-475`) anywhere in the name — no required prefix, so `feat/DSB-475-card-name`, `fix/DSB-475-bug`, `hotfix/DSB-475`, and `DSB-475-quick-change` all pass. Matching is case-insensitive. PRs that don't need a ticket can be exempted by adding a `no-jira-needed` label, which re-triggers the check via the `labeled` event type above.
+6. The Jira key is looked up first in the branch name, then in the PR title if the branch name has none. Feature branches (`feat/DSB-475-card-name`) are covered automatically. For promotion PRs between persistent environment branches (e.g. `dev` → `main`, where the branch name itself will never contain a ticket key), put the key in the **PR title** instead — e.g. `DSB-489: promote to prod`. Matching is case-insensitive, and the key can appear anywhere in either string. PRs that don't need a ticket can be exempted by adding a `no-jira-needed` label, which re-triggers the check via the `labeled` event type above.
 7. `transition_to` failures never fail the workflow (the PR is already merged by then, so there's nothing left to block) — they post a `::warning` instead. Check the Actions log if a card doesn't move; the most common cause is that Jira's workflow doesn't allow a direct transition from the ticket's current status to the target status.
 
 ### 4. Per-Repo Channel Routing
