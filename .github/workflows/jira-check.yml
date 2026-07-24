@@ -29,6 +29,11 @@ on:
         description: 'Jira status the ticket must be in for the PR to be allowed to merge (e.g. "Dev Done")'
         required: true
         type: string
+      authorized_verifiers:
+        description: 'Comma-separated Jira account emails allowed to have performed the transition into required_status. Leave empty to skip this check.'
+        required: false
+        type: string
+        default: ''
       merged:
         description: 'Whether this run is for a merged PR (true) or an open/sync PR being checked (false)'
         required: false
@@ -110,6 +115,7 @@ jobs:
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           ISSUE_KEY: ${{ steps.extract.outputs.key }}
           REQUIRED_STATUS: ${{ inputs.required_status }}
+          AUTHORIZED_VERIFIERS: ${{ inputs.authorized_verifiers }}
         run: |
           python3 - <<'EOF'
           import base64, json, os, sys, urllib.request, urllib.error
@@ -119,16 +125,13 @@ jobs:
           token = os.environ["JIRA_API_TOKEN"]
           issue_key = os.environ["ISSUE_KEY"]
           required_status = os.environ["REQUIRED_STATUS"].strip()
+          verifiers = {v.strip().lower() for v in os.environ["AUTHORIZED_VERIFIERS"].split(",") if v.strip()}
 
           auth = base64.b64encode(f"{email}:{token}".encode()).decode()
+          headers = {"Authorization": f"Basic {auth}", "Accept": "application/json"}
+
           url = f"{base_url}/rest/api/3/issue/{issue_key}?fields=status,summary"
-          req = urllib.request.Request(
-              url,
-              headers={
-                  "Authorization": f"Basic {auth}",
-                  "Accept": "application/json",
-              },
-          )
+          req = urllib.request.Request(url, headers=headers)
 
           try:
               with urllib.request.urlopen(req, timeout=15) as resp:
@@ -158,6 +161,44 @@ jobs:
               sys.exit(1)
 
           print(f"✓ {issue_key} is in the required status ({status}).")
+
+          if not verifiers:
+              sys.exit(0)
+
+          # Walk the changelog to find who most recently moved the ticket into required_status
+          changelog_url = f"{base_url}/rest/api/3/issue/{issue_key}/changelog?maxResults=100"
+          req = urllib.request.Request(changelog_url, headers=headers)
+          try:
+              with urllib.request.urlopen(req, timeout=15) as resp:
+                  changelog = json.load(resp)
+          except (urllib.error.HTTPError, urllib.error.URLError) as e:
+              print(f"::error::Could not fetch changelog for '{issue_key}': {e}. "
+                    f"Cannot verify who moved this ticket to '{required_status}'.")
+              sys.exit(1)
+
+          histories = sorted(changelog.get("values", []), key=lambda h: h["created"], reverse=True)
+
+          mover_email = None
+          for entry in histories:
+              for item in entry.get("items", []):
+                  if item.get("field") == "status" and item.get("toString", "").strip().lower() == required_status.lower():
+                      mover_email = (entry.get("author") or {}).get("emailAddress")
+                      break
+              if mover_email is not None:
+                  break
+
+          if mover_email is None:
+              print(f"::error::Could not find who moved '{issue_key}' to '{required_status}' in its changelog. "
+                    f"Cannot verify authorization.")
+              sys.exit(1)
+
+          if mover_email.strip().lower() not in verifiers:
+              print(f"::error::'{issue_key}' was moved to '{required_status}' by {mover_email}, "
+                    f"but only {', '.join(sorted(verifiers))} are authorized to make that change. "
+                    f"Ask an authorized verifier to confirm and re-move the card.")
+              sys.exit(1)
+
+          print(f"✓ '{required_status}' was set by an authorized verifier ({mover_email}).")
           EOF
 
   transition:
