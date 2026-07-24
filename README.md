@@ -10,7 +10,7 @@ Sends Slack notifications for push events and workflow completions.
 
 ### Jira Ticket Check (`jira-check.yml`)
 
-Blocks a PR from merging unless its branch name references a valid Jira issue key for a specific project (e.g. `DSB-475`, found anywhere in the branch name — `feat/DSB-475-card-name`, `fix/DSB-475-bug`, `DSB-475-quick-change` all match), **and** the ticket is currently in the exact status the caller requires (e.g. `Dev Done`). On merge, it can also transition the ticket forward automatically (e.g. to `Done(Prod)`), so the board reflects real deploy state without relying on developers to move cards by hand. Supports a `no-jira-needed` label to bypass both the pre-merge check and the post-merge transition.
+Blocks a PR from merging unless its **PR title** references a valid Jira issue key for a specific project (e.g. `DSB-489: promote dev to prod`), **and** the ticket is currently in the exact status the caller requires (e.g. `Dev Done`). On merge, it can also transition the ticket forward automatically (e.g. to `Done(Prod)`), so the board reflects real deploy state without relying on developers to move cards by hand. Supports a `no-jira-needed` label to bypass both the pre-merge check and the post-merge transition.
 
 ## Usage
 
@@ -99,7 +99,6 @@ jobs:
     if: github.event.action != 'closed'
     uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/jira-check.yml@main
     with:
-      branch: ${{ github.head_ref }}
       pr_title: ${{ github.event.pull_request.title }}
       jira_base_url: https://yourcompany.atlassian.net
       project_key: DSB
@@ -113,7 +112,6 @@ jobs:
     if: github.event.action == 'closed' && github.event.pull_request.merged == true
     uses: EAO-Global-Consulting/eao-github-workflows/.github/workflows/jira-check.yml@main
     with:
-      branch: ${{ github.head_ref }}
       pr_title: ${{ github.event.pull_request.title }}
       jira_base_url: https://yourcompany.atlassian.net
       project_key: DSB
@@ -129,7 +127,7 @@ jobs:
 For a repo with multiple gated branches requiring different statuses (e.g. a `preprod` step before `main`), duplicate both jobs per branch and guard each with `github.base_ref == '<branch>'` — see `Konnetta-Mobile-app-dev/.github/workflows/jira-check.yml` for a working example with two gates.
 
 5. In the repo's branch protection rules (Settings → Branches → Branch protection rule for each gated branch), add the check job name(s) (e.g. **"Jira Ticket Check / jira-check"**) to **Require status checks to pass before merging**. This is the step that actually makes it a gate — without it, the check runs but doesn't block the merge button. The `jira-transition` job should NOT be added as a required check — it only runs after merge and has nothing to block.
-6. The Jira key is looked up first in the branch name, then in the PR title if the branch name has none. Feature branches (`feat/DSB-475-card-name`) are covered automatically. For promotion PRs between persistent environment branches (e.g. `dev` → `main`, where the branch name itself will never contain a ticket key), put the key in the **PR title** instead — e.g. `DSB-489: promote to prod`. Matching is case-insensitive, and the key can appear anywhere in either string. PRs that don't need a ticket can be exempted by adding a `no-jira-needed` label, which re-triggers the check via the `labeled` event type above.
+6. The Jira key is read from the **PR title** — e.g. `DSB-489: promote dev to prod`. Whoever opens the promotion PR must include the ticket key in the title; the check fails with a clear message if it's missing. Matching is case-insensitive, and the key can appear anywhere in the title. PRs that don't need a ticket can be exempted by adding a `no-jira-needed` label, which re-triggers the check via the `labeled` event type above.
 7. `transition_to` failures never fail the workflow (the PR is already merged by then, so there's nothing left to block) — they post a `::warning` instead. Check the Actions log if a card doesn't move; the most common cause is that Jira's workflow doesn't allow a direct transition from the ticket's current status to the target status.
 
 ### 4. Per-Repo Channel Routing

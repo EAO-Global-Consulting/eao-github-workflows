@@ -3,15 +3,10 @@ name: Jira Ticket Check (Reusable)
 on:
   workflow_call:
     inputs:
-      branch:
-        description: 'Head branch name of the PR'
+      pr_title:
+        description: 'PR title. Must contain the Jira issue key, e.g. "DSB-489: promote dev to prod".'
         required: true
         type: string
-      pr_title:
-        description: 'PR title, used as a fallback source for the Jira key when the branch name has none (e.g. promote PRs from a persistent branch like dev)'
-        required: false
-        type: string
-        default: ''
       jira_base_url:
         description: 'Jira base URL, e.g. https://yourcompany.atlassian.net'
         required: true
@@ -77,39 +72,32 @@ jobs:
               print(f"Bypass label '{bypass}' present — skipping Jira check.")
           EOF
 
-      - name: Extract Jira key from branch name or PR title
+      - name: Extract Jira key from PR title
         if: steps.bypass.outputs.skip != 'true'
         id: extract
         env:
-          BRANCH: ${{ inputs.branch }}
           PR_TITLE: ${{ inputs.pr_title }}
           PROJECT_KEY: ${{ inputs.project_key }}
         run: |
           python3 - <<'EOF'
           import os, re, sys
 
-          branch = os.environ["BRANCH"]
           pr_title = os.environ["PR_TITLE"]
           project_key = os.environ["PROJECT_KEY"].strip().upper()
           pattern = rf'\b{re.escape(project_key)}-\d+\b'
 
-          match = re.search(pattern, branch, re.IGNORECASE)
-          source = "branch name"
-          if not match and pr_title:
-              match = re.search(pattern, pr_title, re.IGNORECASE)
-              source = "PR title"
+          match = re.search(pattern, pr_title, re.IGNORECASE)
 
           if not match:
-              print(f"::error::No {project_key} issue key found in the branch name ('{branch}') "
-                    f"or PR title ('{pr_title}'). Expected a pattern like {project_key}-475 "
-                    f"(e.g. feat/{project_key}-475-card-name, or a PR title like "
-                    f"'{project_key}-475: promote to prod'). "
+              print(f"::error::No {project_key} issue key found in the PR title ('{pr_title}'). "
+                    f"Expected a pattern like {project_key}-475 somewhere in the title "
+                    f"(e.g. '{project_key}-475: promote to prod'). "
                     f"If this PR genuinely doesn't need a ticket, add the "
                     f"'no-jira-needed' label and re-run.")
               sys.exit(1)
 
           key = match.group(0).upper()
-          print(f"Found Jira key: {key} (from {source})")
+          print(f"Found Jira key: {key}")
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
               f.write(f"key={key}\n")
           EOF
@@ -148,7 +136,7 @@ jobs:
           except urllib.error.HTTPError as e:
               if e.code == 404:
                   print(f"::error::Jira issue '{issue_key}' does not exist (404). "
-                        f"Check for a typo in the branch name.")
+                        f"Check for a typo in the PR title.")
               elif e.code in (401, 403):
                   print(f"::error::Jira API auth failed ({e.code}). "
                         f"Check the JIRA_EMAIL / JIRA_API_TOKEN secrets.")
@@ -193,25 +181,21 @@ jobs:
               f.write(f"skip={'true' if skip else 'false'}\n")
           EOF
 
-      - name: Extract Jira key from branch name or PR title
+      - name: Extract Jira key from PR title
         if: steps.bypass.outputs.skip != 'true'
         id: extract
         env:
-          BRANCH: ${{ inputs.branch }}
           PR_TITLE: ${{ inputs.pr_title }}
           PROJECT_KEY: ${{ inputs.project_key }}
         run: |
           python3 - <<'EOF'
           import os, re
 
-          branch = os.environ["BRANCH"]
           pr_title = os.environ["PR_TITLE"]
           project_key = os.environ["PROJECT_KEY"].strip().upper()
           pattern = rf'\b{re.escape(project_key)}-\d+\b'
 
-          match = re.search(pattern, branch, re.IGNORECASE)
-          if not match and pr_title:
-              match = re.search(pattern, pr_title, re.IGNORECASE)
+          match = re.search(pattern, pr_title, re.IGNORECASE)
 
           key = match.group(0).upper() if match else ''
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
